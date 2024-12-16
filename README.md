@@ -1,2 +1,2 @@
 # MSPPSNet
-Code will be coming soon.
+The code will be available soon.
