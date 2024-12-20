@@ -1,8 +1,13 @@
 ## Introduction
-The code is based on MMSegmentaion v1.2.1.
+The code is based on MMSegmentaion v1.2.1. <br>
+
 The repository contains official Pytorch implementations of training and evaluation codes and pre-trained models for MSPPSNet.
+
 ## Get_Started
-You can easily get started by reading https://github.com/open-mmlab/mmsegmentation/blob/main/docs/en/get_started.md.
+You can easily get started by reading <br>
+
+https://github.com/open-mmlab/mmsegmentation/blob/main/docs/en/get_started.md.
+
 ## Prepare datasets
 https://github.com/open-mmlab/mmsegmentation/blob/main/docs/en/user_guides/2_dataset_prepare.md.
 ## Training and Testing
