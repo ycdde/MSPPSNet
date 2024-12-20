@@ -140,11 +140,14 @@ class IoUMetric(BaseMetric):
         for key, val in ret_metrics_summary.items():
             if key == 'aAcc':
                 metrics[key] = val
+            elif key == 'aAcc_excluded':
+                metrics[key] = val
             else:
                 metrics['m' + key] = val
 
         # each class table
         ret_metrics.pop('aAcc', None)
+        ret_metrics.pop('aAcc_excluded', None)
         ret_metrics_class = OrderedDict({
             ret_metric: np.round(ret_metric_value * 100, 2)
             for ret_metric, ret_metric_value in ret_metrics.items()
@@ -159,6 +162,8 @@ class IoUMetric(BaseMetric):
         print_log('\n' + class_table_data.get_string(), logger=logger)
 
         return metrics
+
+
 
     @staticmethod
     def intersect_and_union(pred_label: torch.tensor, label: torch.tensor,
@@ -207,41 +212,21 @@ class IoUMetric(BaseMetric):
                               metrics: List[str] = ['mIoU'],
                               nan_to_num: Optional[int] = None,
                               beta: int = 1):
-        """Calculate evaluation metrics
+        """Calculate evaluation metrics.
         Args:
-            total_area_intersect (np.ndarray): The intersection of prediction
-                and ground truth histogram on all classes.
-            total_area_union (np.ndarray): The union of prediction and ground
-                truth histogram on all classes.
-            total_area_pred_label (np.ndarray): The prediction histogram on
-                all classes.
-            total_area_label (np.ndarray): The ground truth histogram on
-                all classes.
-            metrics (List[str] | str): Metrics to be evaluated, 'mIoU' and
-                'mDice'.
-            nan_to_num (int, optional): If specified, NaN values will be
-                replaced by the numbers defined by the user. Default: None.
-            beta (int): Determines the weight of recall in the combined score.
-                Default: 1.
+            total_area_intersect (torch.Tensor): The intersection of prediction and ground truth histogram on all classes.
+            total_area_union (torch.Tensor): The union of prediction and ground truth histogram on all classes.
+            total_area_pred_label (torch.Tensor): The prediction histogram on all classes.
+            total_area_label (torch.Tensor): The ground truth histogram on all classes.
+            metrics (list): Metrics to be evaluated, 'mIoU' and 'mDice'.
+            nan_to_num (int, optional): If specified, NaN values will be replaced by the numbers defined by the user. Default: None.
+            beta (int): Determines the weight of recall in the combined score. Default: 1.
         Returns:
-            Dict[str, np.ndarray]: per category evaluation metrics,
-                shape (num_classes, ).
+            dict: per category evaluation metrics, shape (num_classes,).
         """
-
         def f_score(precision, recall, beta=1):
-            """calculate the f-score value.
-
-            Args:
-                precision (float | torch.Tensor): The precision value.
-                recall (float | torch.Tensor): The recall value.
-                beta (int): Determines the weight of recall in the combined
-                    score. Default: 1.
-
-            Returns:
-                [torch.tensor]: The f-score value.
-            """
-            score = (1 + beta**2) * (precision * recall) / (
-                (beta**2 * precision) + recall)
+            """Calculate the f-score value."""
+            score = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall)
             return score
 
         if isinstance(metrics, str):
@@ -250,30 +235,74 @@ class IoUMetric(BaseMetric):
         if not set(metrics).issubset(set(allowed_metrics)):
             raise KeyError(f'metrics {metrics} is not supported')
 
+        # Original aAcc calculation
         all_acc = total_area_intersect.sum() / total_area_label.sum()
         ret_metrics = OrderedDict({'aAcc': all_acc})
+
+        # Calculate aAcc excluding the last class
+        total_area_intersect_excluded = total_area_intersect[:-1]
+        total_area_union_excluded = total_area_union[:-1]
+        total_area_pred_label_excluded = total_area_pred_label[:-1]
+        total_area_label_excluded = total_area_label[:-1]
+
+        all_acc_excluded = total_area_intersect_excluded.sum() / total_area_label_excluded.sum()
+        ret_metrics['aAcc_excluded'] = all_acc_excluded
+        def add_average_to_make_six(tensor):
+            avg_value = tensor.mean().item()
+            extended_tensor = torch.cat((tensor, torch.tensor([avg_value])))
+            return extended_tensor
+
         for metric in metrics:
             if metric == 'mIoU':
+                # Normal IoU calculation
                 iou = total_area_intersect / total_area_union
-                acc = total_area_intersect / total_area_label
                 ret_metrics['IoU'] = iou
-                ret_metrics['Acc'] = acc
-            elif metric == 'mDice':
-                dice = 2 * total_area_intersect / (
-                    total_area_pred_label + total_area_label)
+
+                # IoU excluding the last class and extend it to 6 items
+                iou_excluded = total_area_intersect_excluded / total_area_union_excluded
+                iou_excluded_extended = add_average_to_make_six(iou_excluded)
+                ret_metrics['IoU_excluded'] = iou_excluded_extended
+
+                # Acc calculation
                 acc = total_area_intersect / total_area_label
-                ret_metrics['Dice'] = dice
                 ret_metrics['Acc'] = acc
+                acc_excluded = total_area_intersect_excluded / total_area_label_excluded
+                acc_excluded_extended = add_average_to_make_six(acc_excluded)
+                ret_metrics['Acc_excluded'] = acc_excluded_extended
+                
+
+            elif metric == 'mDice':
+                # Normal Dice calculation
+                dice = 2 * total_area_intersect / (total_area_pred_label + total_area_label)
+                ret_metrics['Dice'] = dice
+
+                # Dice excluding the last class and extend it to 6 items
+                dice_excluded = 2 * total_area_intersect_excluded / (total_area_pred_label_excluded + total_area_label_excluded)
+                dice_excluded_extended = add_average_to_make_six(dice_excluded)
+                ret_metrics['Dice_excluded'] = dice_excluded_extended
+
             elif metric == 'mFscore':
+                # Normal Fscore calculation
                 precision = total_area_intersect / total_area_pred_label
                 recall = total_area_intersect / total_area_label
-                f_value = torch.tensor([
-                    f_score(x[0], x[1], beta) for x in zip(precision, recall)
-                ])
+                f_value = torch.tensor([f_score(x[0], x[1], beta) for x in zip(precision, recall)])
                 ret_metrics['Fscore'] = f_value
                 ret_metrics['Precision'] = precision
                 ret_metrics['Recall'] = recall
 
+                # Fscore excluding the last class and extend it to 6 items
+                precision_excluded = total_area_intersect_excluded / total_area_pred_label_excluded
+                recall_excluded = total_area_intersect_excluded / total_area_label_excluded
+                f_value_excluded = torch.tensor([f_score(x[0], x[1], beta) for x in zip(precision_excluded, recall_excluded)])
+
+                precision_excluded_extended = add_average_to_make_six(precision_excluded)
+                recall_excluded_extended = add_average_to_make_six(recall_excluded)
+                f_value_excluded_extended = add_average_to_make_six(f_value_excluded)
+
+                ret_metrics['Fscore_excluded'] = f_value_excluded_extended
+                ret_metrics['Precision_excluded'] = precision_excluded_extended
+                ret_metrics['Recall_excluded'] = recall_excluded_extended
+                
         ret_metrics = {
             metric: value.numpy()
             for metric, value in ret_metrics.items()
